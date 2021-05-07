@@ -8,7 +8,7 @@ Please see http://distantspeechrecognition.sourceforge.net/ for project details.
 
 ## Install on ubuntu
 
-**  1. install dependent packages for btk **
+**1. install dependent packages for btk**
 
 ```
 $ sudo apt install camke
@@ -24,14 +24,14 @@ $ sudo apt install libsndfile1-dev
 $ sudo apt install sndfile-programs
 ```
 
-** 2. downloading BTK2.0**
+**2. downloading BTK2.0**
 ```
 $ git clone https://github.com/kkumatani/distant_speech_recognition.git
 ```
 
 
 
-**  3. Installing BTK2.0 **
+**3. Installing BTK2.0**
 
 ```
 $ cd ${your_btk_git_repository_directory}/btk20_src
