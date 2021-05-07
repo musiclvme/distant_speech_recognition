@@ -945,6 +945,17 @@ class SubbandSMIMVDRBeamformer(SubbandMVDRBeamformer):
         self._noise_covariance_matrices  = None
         self._noise_frame_num  = 0
 
+		# add some variables for mcra
+        self._temp = None
+        self._min = None
+        self._noise_p = None
+        self._pk = None
+        self._frame_num = 0
+        self._noise = None
+        self._noise_avg = None
+        self._noise_theta = None
+        self._noise_estimate = None
+
     def accu_stats_from_label(self, samplerate, target_labs = [(0.1, -1)], energy_threshold = 10):
         """
         Having a voice activity segmentation label, accumulate second order statistics (SOS)
@@ -990,6 +1001,90 @@ class SubbandSMIMVDRBeamformer(SubbandMVDRBeamformer):
             self._noise_covariance_matrices = noise_covariance_matrices
         else:
             self._noise_covariance_matrices += noise_covariance_matrices
+
+    def accu_stats_from_label_mytest(self, samplerate, target_labs = [(0.1, -1)], energy_threshold = 10):
+        """
+        Having a voice activity segmentation label, accumulate second order statistics (SOS)
+        for noise covariance matrix estimation.
+
+        :note: after loading all the stats, call self.finalize_stats() to finish computing the covariance matrix
+        :param samplerate: sampling rate
+        :type samplerate: int
+        :param target_lab: start and end time of the target signal in sec.
+        :type  target_lab: list of float pairs
+        :param energy_threshold: enegery threshold: ignore the frame if the energy is less than this
+        :type  energy_threshold: float
+        """
+
+
+        elapsed_time = 0.0
+        time_delta = self.shiftlen() / float(samplerate)
+        noise_frame_num  = 0
+        noise_covariance_matrices  = numpy.zeros((self._fftlen2+1, self._chan_num), numpy.complex)
+        self._noise_avg = numpy.zeros((self._fftlen2+1, self._chan_num, self._chan_num), numpy.complex)
+        self._noise_theta = numpy.zeros((self._fftlen2+1, self._chan_num), numpy.float)
+        self._noise_estimate = numpy.zeros((self._fftlen2 + 1, self._chan_num), numpy.complex)
+        self._pk = self._noise_theta;
+        labx = 0
+        alpa_s = 0.8
+        alpa_p = 0.2
+        alpa_d = 0.9
+        L = 50
+        delta_thres = 1.5
+        # calc energy
+
+        while True:
+            try:
+                self._array_source.update_snapshot_array(chan_no=0)
+                self._frame_num += 1
+                for m in range(self._fftlen2 + 1):
+                    XK = self._array_source.get_snapshot(m)
+                    noise_covariance_matrices[m] = abs(numpy.dot(numpy.conjugate(XK), XK))
+                    for j in range(XK.size):
+                        self._noise_theta[m][j] = numpy.angle(XK[j])
+
+                        # init value
+                if (self._frame_num == 1):
+                    self._min = noise_covariance_matrices
+                    self._temp = noise_covariance_matrices
+                    self._noise = noise_covariance_matrices
+                    self._noise_p = noise_covariance_matrices
+                else:
+                    # update energy
+                    self._noise_p = alpa_s * self._noise_p + noise_covariance_matrices
+
+                # search min in L frames batch
+                if (self._frame_num % L == 0):
+                    for i in range(self._fftlen2 + 1):
+                        for j in range(len(noise_covariance_matrices[0])):
+                            self._min[i][j] = self._temp[i][j] if self._temp[i][j] < self._noise_p[i][j] else self._noise_p[i][j]
+                            self._temp[i][j] = self._noise_p[i][j]
+                else:
+                    for i in range(self._fftlen2 + 1):
+                        for j in range(len(noise_covariance_matrices[0])):
+                            self._min[i][j] = self._min[i][j] if self._min[i][j] < self._noise_p[i][j] else self._noise_p[i][j]
+                            self._temp[i][j] = self._temp[i][j] if self._temp[i][j] < self._noise_p[i][j] else self._noise_p[i][j]
+                # caculate
+                for i in range(self._fftlen2 + 1):
+                    for j in range(len(noise_covariance_matrices[0])):
+                        ratio = self._noise_p[i][j]/self._min[i][j]
+                        ik = 1.0 if ratio > delta_thres else 0.0
+                        self._pk[i][j] = alpa_p * self._pk[i][j] + (1 - alpa_p)*ik
+                        adk = alpa_d + (1 - alpa_d)*self._pk[i][j]
+                        self._noise[i][j] = adk * self._noise[i][j] + (1-adk) * noise_covariance_matrices[i][j]
+                        AMP = numpy.sqrt(self._noise[i][j])
+                        REAL = numpy.cos(self._noise_theta[i][j])
+                        IMG = numpy.sin(self._noise_theta[i][j])
+                        self._noise_estimate[i][j] = numpy.complex(AMP*REAL, AMP*IMG)
+                    self._noise_avg[i] +=   numpy.outer(self._noise_estimate[i] , numpy.conjugate(self._noise_estimate[i]))
+            except StopIteration:
+                break
+
+        self._noise_frame_num = self._frame_num
+        if self._noise_covariance_matrices is None:
+            self._noise_covariance_matrices = self._noise_avg
+        else:
+            self._noise_covariance_matrices += self._noise_avg
 
     def finalize_stats(self):
         """
